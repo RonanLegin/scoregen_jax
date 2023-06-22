@@ -26,6 +26,8 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import numpy as np
 
+import jax
+jax.config.update('jax_platform_name', 'cpu')
 
 # Function ported from StyleGAN2
 def get_weight(module,
@@ -208,170 +210,103 @@ def conv_downsample_3d(x, w, k=None, factor=2, gain=1, data_format='NHWDC'):
     dimension_numbers=(data_format, 'HWIO', data_format))
 
 
-def upfirdn_3d(x, k, upx, upy, upz, downx, downy, downz, padx0, padx1, pady0, pady1, padz0, padz1):
-  """Pad, upsample, FIR filter, and downsample a batch of 3D images.
 
-    Accepts a batch of 3D images of the shape `[majorDim, inH, inW, inD, minorDim]`
-    and performs the following operations for each image, batched across
-    `majorDim` and `minorDim`:
-    1. Pad the image with zeros by the specified number of pixels on each side
-       (`padx0`, `padx1`, `pady0`, `pady1`, `padz0`, `padz1`). Specifying a negative value
-       corresponds to cropping the image.
-    2. Upsample the image by inserting the zeros after each pixel (`upx`,
-    `upy`, `upz`).
-    3. Convolve the image with the specified 3D FIR filter (`k`), shrinking the
-       image so that the footprint of all output pixels lies within the input
-       image.
-    4. Downsample the image by throwing away pixels (`downx`, `downy`, `downz`).
-    This sequence of operations bears close resemblance to
-    scipy.signal.upfirdn().
-    The fused op is considerably more efficient than performing the same
-    calculation
-    using standard TensorFlow ops. It supports gradients of arbitrary order.
-    Args:
-        x:      Input tensor of the shape `[majorDim, inH, inW, inD, minorDim]`.
-        k:      3D FIR filter of the shape `[firH, firW, firD]`.
-        upx:    Integer upsampling factor along the X-axis (default: 1).
-        upy:    Integer upsampling factor along the Y-axis (default: 1).
-        upz:    Integer upsampling factor along the Z-axis (default: 1).
-        downx:  Integer downsampling factor along the X-axis (default: 1).
-        downy:  Integer downsampling factor along the Y-axis (default: 1).
-        downz:  Integer downsampling factor along the Z-axis (default: 1).
-        padx0:  Number of pixels to pad on the left side (default: 0).
-        padx1:  Number of pixels to pad on the right side (default: 0).
-        pady0:  Number of pixels to pad on the top side (default: 0).
-        pady1:  Number of pixels to pad on the bottom side (default: 0).
-        padz0:  Number of pixels to pad on the front side (default: 0).
-        padz1:  Number of pixels to pad on the back side (default: 0).
-        impl:   Name of the implementation to use. Can be `"ref"` or `"cuda"`
-          (default).
-
-    Returns:
-        Tensor of the shape `[majorDim, outH, outW, outD, minorDim]`, and same
-        datatype as `x`.
+def upfirdn_1d(x, k, up, down, pad0, pad1):
+  """
+  Pad, upsample, FIR filter, and downsample a batch of 1D signals.
   """
   k = jnp.asarray(k, dtype=np.float32)
-  assert len(x.shape) == 5
+  assert len(x.shape) == 3
   inH = x.shape[1]
-  inW = x.shape[2]
-  inD = x.shape[3]
-  minorDim = x.shape[4]
-  kernelH, kernelW, kernelD = k.shape
-  assert inW >= 1 and inH >= 1 and inD >= 1
-  assert kernelW >= 1 and kernelH >= 1 and kernelD >= 1
-  assert isinstance(upx, int) and isinstance(upy, int) and isinstance(upz, int)
-  assert isinstance(downx, int) and isinstance(downy, int) and isinstance(downz, int)
-  assert isinstance(padx0, int) and isinstance(padx1, int) 
-  assert isinstance(pady0, int) and isinstance(pady1, int)
-  assert isinstance(padz0, int) and isinstance(padz1, int)
+  minorDim = x.shape[2]
+  kernelH = k.shape[0]
+  assert inH >= 1
+  assert kernelH >= 1
+  assert isinstance(up, int)
+  assert isinstance(down, int)
+  assert isinstance(pad0, int) and isinstance(pad1, int)
 
   # Upsample (insert zeros).
-  x = jnp.reshape(x, (-1, inH, 1, inW, 1, inD, 1, minorDim))
-  x = jnp.pad(x, [[0, 0], [0, 0], [0, upy - 1], [0, 0], [0, upx - 1], [0, 0], [0, upz - 1]])
-  x = jnp.reshape(x, [-1, inH * upy, inW * upx, inD * upz, minorDim])
+  x = jnp.reshape(x, (-1, inH, 1, minorDim))
+  x = jnp.pad(x, [[0, 0], [0, 0], [0, up - 1], [0, 0]])
+  x = jnp.reshape(x, [-1, inH * up, minorDim])
 
   # Pad (crop if negative).
-  x = jnp.pad(x, [[0, 0], [max(pady0, 0), max(pady1, 0)],
-                  [max(padx0, 0), max(padx1, 0)], [max(padz0, 0), max(padz1, 0)], [0, 0]])
-  x = x[:,
-      max(-pady0, 0):x.shape[1] - max(-pady1, 0),
-      max(-padx0, 0):x.shape[2] - max(-padx1, 0),
-      max(-padz0, 0):x.shape[3] - max(-padz1, 0), :]
+  x = jnp.pad(x, [[0, 0], [max(pad0, 0), max(pad1, 0)], [0, 0]])
+  x = x[:, max(-pad0, 0):x.shape[1] - max(-pad1, 0), :]
 
   # Convolve with filter.
-  x = jnp.transpose(x, [0, 4, 1, 2, 3])
-  x = jnp.reshape(x,
-                  [-1, 1, inH * upy + pady0 + pady1, inW * upx + padx0 + padx1, inD * upz + padz0 + padz1])
-  w = jnp.array(k[::-1, ::-1, ::-1, None, None], dtype=x.dtype)
+  x = jnp.transpose(x, [0, 2, 1])
+  x = jnp.reshape(x, [-1, 1, inH * up + pad0 + pad1])
+  w = jnp.array(k[::-1, None, None], dtype=x.dtype)
   x = jax.lax.conv_general_dilated(
     x,
     w,
-    window_strides=(1, 1, 1),
+    window_strides=(1,),
     padding='VALID',
-    dimension_numbers=('NCHWD', 'HWDIO', 'NCHWD'))
+    dimension_numbers=('NCH', 'HIO', 'NCH'))
 
-  x = jnp.reshape(x, [
-    -1, minorDim, inH * upy + pady0 + pady1 - kernelH + 1,
-                  inW * upx + padx0 + padx1 - kernelW + 1,
-                  inD * upz + padz0 + padz1 - kernelD + 1
-  ])
-  x = jnp.transpose(x, [0, 2, 3, 4, 1])
+  x = jnp.reshape(x, [-1, minorDim, inH * up + pad0 + pad1 - kernelH + 1])
+  x = jnp.transpose(x, [0, 2, 1])
 
   # Downsample (throw away pixels).
-  return x[:, ::downy, ::downx, ::downz, :]
+  return x[:, ::down, :]
 
 
-def _simple_upfirdn_3d(x, k, up=1, down=1, pad0=0, pad1=0, data_format='NCHWD'):
-  assert data_format in ['NCHWD', 'NHWDC']
-  assert len(x.shape) == 5
+
+def _simple_upfirdn_1d(x, k, up=1, down=1, pad0=0, pad1=0, data_format='NCH'):
+  assert data_format in ['NCH', 'NHC']
+  assert len(x.shape) == 3
   y = x
-  if data_format == 'NCHWD':
-    y = jnp.reshape(y, [-1, y.shape[2], y.shape[3], y.shape[4], 1])
-  y = upfirdn_3d(
+  if data_format == 'NCH':
+    y = jnp.reshape(y, [-1, y.shape[1], 1])
+  y = upfirdn_1d(
     y,
     k,
-    upx=up,
-    upy=up,
-    upz=up,
-    downx=down,
-    downy=down,
-    downz=down,
-    padx0=pad0,
-    padx1=pad1,
-    pady0=pad0,
-    pady1=pad1,
-    padz0=pad0,
-    padz1=pad1)
-  if data_format == 'NCHWD':
-    y = jnp.reshape(y, [-1, x.shape[1], y.shape[1], y.shape[2], y.shape[3]])
+    up=up,
+    down=down,
+    pad0=pad0,
+    pad1=pad1)
+  if data_format == 'NCH':
+    y = jnp.reshape(y, [-1, x.shape[1], y.shape[1]])
   return y
 
 
 def _setup_kernel(k):
   k = np.asarray(k, dtype=np.float32)
-  if k.ndim == 1:
-    k = np.outer(k, k)
   k /= np.sum(k)
-  assert k.ndim == 2
-  assert k.shape[0] == k.shape[1]
+  assert k.ndim == 1
   return k
-
 
 def _shape(x, dim):
   return x.shape[dim]
 
 
 def upsample_1d(x, k=None, factor=2, gain=1, data_format='NHC'):
-  r"""Upsample a batch of 3D cubes with the given filter.
+  r"""Upsample a batch of 1D sequences with the given filter.
 
-    Accepts a batch of 3D cubes of the shape `[N, C, H, W, D]` or `[N, H, W, D, C]`
-    and upsamples each image with the given filter. The filter is normalized so
-    that
-    if the input pixels are constant, they will be scaled by the specified
+    Accepts a batch of 1D sequences of the shape `[N, C, H]` or `[N, H, C]`
+    and upsamples each sequence with the given filter. The filter is normalized so
+    that if the input values are constant, they will be scaled by the specified
     `gain`.
-    Pixels outside the image are assumed to be zero, and the filter is padded
-    with
-    zeros so that its shape is a multiple of the upsampling factor.
+    Values outside the sequence are assumed to be zero, and the filter is padded
+    with zeros so that its shape is a multiple of the upsampling factor.
     Args:
-        x:            Input tensor of the shape `[N, C, H, W, D]` or `[N, H, W, D,
-          C]`.
-        k:            FIR filter of the shape `[firH, firW, firD]` or `[firN]`
-          (separable). The default is `[1] * factor`, which corresponds to
-          nearest-neighbor upsampling.
+        x:            Input tensor of the shape `[N, C, H]` or `[N, H, C]`.
+        k:            FIR filter of the shape `[firN]` (separable). The default is `[1] * factor`, which corresponds to nearest-neighbor upsampling.
         factor:       Integer upsampling factor (default: 2).
         gain:         Scaling factor for signal magnitude (default: 1.0).
-        data_format:  `'NCHWD'` or `'NHWDC'` (default: `'NCHWD'`).
+        data_format:  `'NCH'` or `'NHC'` (default: `'NCH'`).
 
     Returns:
-        Tensor of the shape `[N, C, H * factor, W * factor, D * factor]` or
-        `[N, H * factor, W * factor, D * factor, C]`, and same datatype as `x`.
+        Tensor of the shape `[N, C, H * factor]` or `[N, H * factor, C]`, and same datatype as `x`.
   """
   assert isinstance(factor, int) and factor >= 1
   if k is None:
     k = [1] * factor
-  k = _setup_kernel(k) * (gain * (factor ** 2))
+  k = _setup_kernel(k) * (gain * factor)
   p = k.shape[0] - factor
-  return _simple_upfirdn_3d(
+  return _simple_upfirdn_1d(
     x,
     k,
     up=factor,
@@ -380,32 +315,25 @@ def upsample_1d(x, k=None, factor=2, gain=1, data_format='NHC'):
     data_format=data_format)
 
 
-def downsample_3d(x, k=None, factor=2, gain=1, data_format='NHWDC'):
-  r"""Downsample a batch of 3D cubes with the given filter.
 
-    Accepts a batch of 3D cubes of the shape `[N, C, H, W, D]` or `[N, H, W, D, C]`
-    and downsamples each image with the given filter. The filter is normalized
-    so that
-    if the input pixels are constant, they will be scaled by the specified
+def downsample_1d(x, k=None, factor=2, gain=1, data_format='NHC'):
+  r"""Downsample a batch of 1D sequences with the given filter.
+
+    Accepts a batch of 1D sequences of the shape `[N, C, H]` or `[N, H, C]`
+    and downsamples each sequence with the given filter. The filter is normalized so
+    that if the input values are constant, they will be scaled by the specified
     `gain`.
-    Pixels outside the image are assumed to be zero, and the filter is padded
-    with
-    zeros so that its shape is a multiple of the downsampling factor.
+    Values outside the sequence are assumed to be zero, and the filter is padded
+    with zeros so that its shape is a multiple of the downsampling factor.
     Args:
-        x:            Input tensor of the shape `[N, C, H, W, D]` or `[N, H, W, D,
-          C]`.
-        k:            FIR filter of the shape `[firH, firW, firD]` or `[firN]`
-          (separable). The default is `[1] * factor`, which corresponds to
-          average pooling.
+        x:            Input tensor of the shape `[N, C, H]` or `[N, H, C]`.
+        k:            FIR filter of the shape `[firN]` (separable). The default is `[1] * factor`, which corresponds to average pooling.
         factor:       Integer downsampling factor (default: 2).
         gain:         Scaling factor for signal magnitude (default: 1.0).
-        data_format:  `'NCHWD'` or `'NHWDC'` (default: `'NCHWD'`).
-        impl:         Name of the implementation to use. Can be `"ref"` or
-          `"cuda"` (default).
+        data_format:  `'NCH'` or `'NHC'` (default: `'NCH'`).
 
     Returns:
-        Tensor of the shape `[N, C, H // factor, W // factor, D // factor]` or
-        `[N, H // factor, W // factor, D // factor, C]`, and same datatype as `x`.
+        Tensor of the shape `[N, C, H // factor]` or `[N, H // factor, C]`, and same datatype as `x`.
   """
 
   assert isinstance(factor, int) and factor >= 1
@@ -413,7 +341,7 @@ def downsample_3d(x, k=None, factor=2, gain=1, data_format='NHWDC'):
     k = [1] * factor
   k = _setup_kernel(k) * gain
   p = k.shape[0] - factor
-  return _simple_upfirdn_3d(
+  return _simple_upfirdn_1d(
     x,
     k,
     down=factor,
