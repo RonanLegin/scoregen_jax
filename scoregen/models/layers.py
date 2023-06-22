@@ -17,6 +17,7 @@
 """Layers for defining NCSN++.
 """
 import functools
+import string
 from typing import Any, Optional, Tuple
 from . import up_or_down_sampling_1d as up_or_down_sampling
 import flax.linen as nn
@@ -86,6 +87,21 @@ class NIN(nn.Module):
     y = contract_inner(x, W) + b
     assert y.shape == x.shape[:-1] + (self.num_units,)
     return y
+
+
+def _einsum(a, b, c, x, y):
+  einsum_str = '{},{}->{}'.format(''.join(a), ''.join(b), ''.join(c))
+  return jnp.einsum(einsum_str, x, y)
+
+
+def contract_inner(x, y):
+  """tensordot(x, y, 1)."""
+  x_chars = list(string.ascii_lowercase[:len(x.shape)])
+  y_chars = list(string.ascii_uppercase[:len(y.shape)])
+  assert len(x_chars) == len(x.shape) and len(y_chars) == len(y.shape)
+  y_chars[0] = x_chars[-1]  # first axis of y and last of x get summed
+  out_chars = x_chars[:-1] + y_chars[1:]
+  return _einsum(x_chars, y_chars, out_chars, x, y)
 
 
 class GaussianFourierProjection(nn.Module):
