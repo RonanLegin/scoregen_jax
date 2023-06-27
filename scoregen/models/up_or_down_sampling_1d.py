@@ -26,8 +26,6 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import numpy as np
 
-import jax
-jax.config.update('jax_platform_name', 'cpu')
 
 # Function ported from StyleGAN2
 def get_weight(module,
