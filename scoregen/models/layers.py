@@ -139,7 +139,7 @@ class AttnBlockpp(nn.Module):
     if not self.skip_rescale:
       return x + h
     else:
-      return (x + h) / jnp.sqrt(jnp.array(2., dtype=jnp.float32))#np.sqrt(2.)
+      return (x + h) / jnp.sqrt(jnp.array(2., dtype=x.dtype))#np.sqrt(2.)
 
 
 class ResnetBlockBigGANpp(nn.Module):
@@ -189,4 +189,4 @@ class ResnetBlockBigGANpp(nn.Module):
     if not self.skip_rescale:
       return x + h
     else:
-      return (x + h) / jnp.sqrt(jnp.array(2., dtype=jnp.float32))#np.sqrt(2.)
+      return (x + h) / jnp.sqrt(jnp.array(2., dtype=x.dtype))#np.sqrt(2.)
