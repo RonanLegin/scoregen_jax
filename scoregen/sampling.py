@@ -45,7 +45,7 @@ from .utils import batch_mul
 
 
 
-def get_sampler(sde, model, shape, eps=1e-5):
+def get_sampler(sde, model, shape, eps=1e-5, dtype=jnp.float32):
   """Create a Predictor-Corrector (PC) sampler.
 
   Args:
@@ -73,8 +73,8 @@ def get_sampler(sde, model, shape, eps=1e-5):
 
     # Initial sample
     rng, step_rng = random.split(rng)
-    x = sde.prior_sampling(step_rng, shape)
-    timesteps = jnp.linspace(sde.T, eps, sde.N)
+    x = sde.prior_sampling(step_rng, shape, dtype=dtype)
+    timesteps = jnp.linspace(sde.T, eps, sde.N, dtype=dtype)
 
     score_fn = mutils.get_score_fn(sde, model, state.params_ema, state.model_state, train=False, return_state=False)
     rsde = sde.reverse(score_fn)
@@ -83,10 +83,10 @@ def get_sampler(sde, model, shape, eps=1e-5):
     def loop_body(i, val):
       rng, x, x_mean = val
       t = timesteps[i]
-      vec_t = jnp.ones(shape[0]) * t
+      vec_t = jnp.ones(shape[0], dtype=dtype) * t
       rng, step_rng = random.split(rng)
 
-      z = random.normal(rng, x.shape)
+      z = random.normal(rng, x.shape, dtype=dtype)
       drift, diffusion = rsde.sde(x, vec_t)
       x_mean = x + drift * dt
       x = x_mean + batch_mul(diffusion, jnp.sqrt(-dt) * z)

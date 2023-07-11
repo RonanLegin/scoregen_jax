@@ -141,8 +141,8 @@ class VESDE(SDE):
     mean = x
     return mean, std
 
-  def prior_sampling(self, rng, shape):
-    return jax.random.normal(rng, shape) * self.sigma_max
+  def prior_sampling(self, rng, shape, dtype=jnp.float32):
+    return jax.random.normal(rng, shape, dtype) * self.sigma_max
 
   def prior_logp(self, z):
     shape = z.shape

@@ -223,7 +223,7 @@ def upfirdn_1d(x, k, up, down, pad0, pad1):
   assert isinstance(up, int)
   assert isinstance(down, int)
   assert isinstance(pad0, int) and isinstance(pad1, int)
-
+  
   # Upsample (insert zeros).
   x = jnp.reshape(x, (-1, inH, 1, minorDim))
   x = jnp.pad(x, [[0, 0], [0, 0], [0, up - 1], [0, 0]])
