@@ -21,6 +21,7 @@ import optax
 import jax
 import jax.numpy as jnp
 import jax.random as random
+#import jax.vjp as vjp
 from .models import utils as mutils
 from .sde import VESDE
 from .utils import batch_mul
@@ -75,8 +76,6 @@ def get_sde_loss_fn(sde, model, train, eps=1e-5):
     return loss, new_model_state
 
   return loss_fn
-
-
 
 
 def get_step_fn(sde, model, train, optimizer=None):

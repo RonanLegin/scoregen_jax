@@ -130,10 +130,10 @@ def get_score_fn(sde, model, params, states, train=False, return_state=False):
   model_fn = get_model_fn(model, params, states, train=train)
 
   def score_fn(x, t, rng=None):
-    sigmas = sde.marginal_prob(jnp.zeros_like(x), t)[1]
+    sigma_t = sde.marginal_prob(jnp.zeros_like(x), t)[1]
 
     output, state = model_fn(x, t, rng)
-    score = output/sigmas.reshape((x.shape[0], *([1] * len(x.shape[1:]))))
+    score = output / sigma_t.reshape((x.shape[0], *([1] * len(x.shape[1:]))))
     
     if return_state:
       return score, state

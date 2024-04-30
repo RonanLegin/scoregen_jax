@@ -26,6 +26,7 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import numpy as np
 
+SQRT2 = 1.41421356
 
 def get_act(config):
   """Get activation functions from the config file."""
@@ -111,7 +112,7 @@ class GaussianFourierProjection(nn.Module):
 
   @nn.compact
   def __call__(self, x):
-    W = self.param('W', jax.nn.initializers.normal(stddev=self.scale), (self.embedding_size,))
+    W = self.param('W', jax.nn.initializers.normal(stddev=self.scale), (self.embedding_size // 2,))
     W = jax.lax.stop_gradient(W)
     x_proj = x[:, None] * W[None, :] * 2 * jnp.pi
     return jnp.concatenate([jnp.sin(x_proj), jnp.cos(x_proj)], axis=-1)
@@ -158,7 +159,7 @@ class ResnetBlockBigGANpp(nn.Module):
   def __call__(self, x, temb=None, train=True):
     B, H, C = x.shape
     out_ch = self.out_ch if self.out_ch else C
-    h = self.act(nn.GroupNorm(num_groups=min(x.shape[-1] // 4, 32))(x))
+    h = self.act(nn.GroupNorm(num_groups=min(x.shape[-1] // 4, 32), epsilon=1e-6)(x))
 
     if self.up:
       if self.fir:
@@ -189,4 +190,4 @@ class ResnetBlockBigGANpp(nn.Module):
     if not self.skip_rescale:
       return x + h
     else:
-      return (x + h) / jnp.sqrt(jnp.array(2., dtype=x.dtype))#np.sqrt(2.)
+      return (x + h) / SQRT2
