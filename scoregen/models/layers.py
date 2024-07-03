@@ -154,6 +154,57 @@ class ResnetBlockBigGANpp(nn.Module):
   fir_kernel: Tuple[int] = (1, 3, 1)
   skip_rescale: bool = True
   init_scale: float = 0.
+  up_down_factor: int = 2
+
+  @nn.compact
+  def __call__(self, x, temb=None, train=True):
+    B, H, C = x.shape
+    out_ch = self.out_ch if self.out_ch else C
+    h = self.act(nn.GroupNorm(num_groups=min(x.shape[-1] // 4, 32), epsilon=1e-6)(x))
+
+    if self.up:
+      if self.fir:
+        h = up_or_down_sampling.upsample_1d(h, self.fir_kernel, factor=self.up_down_factor)
+        x = up_or_down_sampling.upsample_1d(x, self.fir_kernel, factor=self.up_down_factor)
+      else:
+        h = up_or_down_sampling.naive_upsample_1d(h, factor=self.up_down_factor)
+        x = up_or_down_sampling.naive_upsample_1d(x, factor=self.up_down_factor)
+    elif self.down:
+      if self.fir:
+        h = up_or_down_sampling.downsample_1d(h, self.fir_kernel, factor=self.up_down_factor)
+        x = up_or_down_sampling.downsample_1d(x, self.fir_kernel, factor=self.up_down_factor)
+      else:
+        h = up_or_down_sampling.naive_downsample_1d(h, factor=self.up_down_factor)
+        x = up_or_down_sampling.naive_downsample_1d(x, factor=self.up_down_factor)
+
+    h = conv3(h, out_ch)
+    # Add bias to each feature map conditioned on the time embedding
+    if temb is not None:
+      h += nn.Dense(out_ch, kernel_init=default_init())(self.act(temb))[:, None, :]
+
+    h = self.act(nn.GroupNorm(num_groups=min(h.shape[-1] // 4, 32))(h))
+    h = nn.Dropout(self.dropout)(h, deterministic=not train)
+    h = conv3(h, out_ch, init_scale=self.init_scale)
+    if C != out_ch or self.up or self.down:
+      x = conv1(x, out_ch)
+
+    if not self.skip_rescale:
+      return x + h
+    else:
+      return (x + h) / SQRT2
+
+
+class ResnetBlockBigGANppOG(nn.Module):
+  """ResBlock adapted from BigGAN."""
+  act: Any
+  up: bool = False
+  down: bool = False
+  out_ch: Optional[int] = None
+  dropout: float = 0.1
+  fir: bool = False
+  fir_kernel: Tuple[int] = (1, 3, 1)
+  skip_rescale: bool = True
+  init_scale: float = 0.
 
   @nn.compact
   def __call__(self, x, temb=None, train=True):
@@ -186,6 +237,40 @@ class ResnetBlockBigGANpp(nn.Module):
     h = conv3(h, out_ch, init_scale=self.init_scale)
     if C != out_ch or self.up or self.down:
       x = conv1(x, out_ch)
+
+    if not self.skip_rescale:
+      return x + h
+    else:
+      return (x + h) / SQRT2
+
+
+
+
+class ResnetWhiteSkip(nn.Module):
+  """ResBlock adapted from BigGAN."""
+  act: Any
+  out_ch: Optional[int] = None
+  dropout: float = 0.1
+  skip_rescale: bool = True
+  init_scale: float = 0.
+
+  @nn.compact
+  def __call__(self, x, temb=None, train=True):
+    B, H, C = x.shape
+    out_ch = self.out_ch if self.out_ch else C
+    h = self.act(nn.GroupNorm(num_groups=min(x.shape[-1] // 4, 32), epsilon=1e-6)(x))
+
+    h = conv1(h, out_ch, init_scale=self.init_scale)
+    # Add bias to each feature map conditioned on the time embedding
+    if temb is not None:
+      h += nn.Dense(out_ch, kernel_init=default_init())(self.act(temb))[:, None, :]
+
+    h = self.act(nn.GroupNorm(num_groups=min(h.shape[-1] // 4, 32))(h))
+    h = nn.Dropout(self.dropout)(h, deterministic=not train)
+    h = conv1(h, out_ch, init_scale=self.init_scale)
+    
+    if C != out_ch:
+      x = conv1(x, out_ch, init_scale=self.init_scale)
 
     if not self.skip_rescale:
       return x + h

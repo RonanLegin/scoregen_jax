@@ -24,7 +24,7 @@ import jax.numpy as jnp
 import jax
 import numpy as np
 from flax.training import checkpoints
-from .model import NCSNpp1D
+from .model import NCSNpp1D, WhiteSkip1D,NCSNpp1D2
 
 
 class Config:
@@ -63,7 +63,15 @@ class State:
 def init_model(rng, config):
   """ Initialize a `flax.linen.Module` model. """
   model_name = config.model.name
-  model = NCSNpp1D(config)
+  if model_name == 'ncsnpp1d':
+    model = NCSNpp1D(config)
+  elif model_name == 'ncsnpp1d2':
+    model = NCSNpp1D2(config)
+  elif model_name == 'whiteskip1d':
+    model = WhiteSkip1D(config)
+  else:
+    raise ValueError(f"Unsupported model name: {model_name}. Only 'ncnspp' and 'whiteskip' are supported.")
+
 
   input_shape = (1, config.data.data_size, config.data.num_channels)
   fake_input = jnp.zeros(input_shape, dtype=jnp.float32)
